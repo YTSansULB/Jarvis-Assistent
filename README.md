@@ -154,6 +154,7 @@ No license specified yet. All rights reserved by the author.
 ---
 ---
 
+Support: https://t.me/Achancewithoutachance78/1905
 # Jarvis Assistant (Русская версия)
 
 > Десктопный ассистент, вдохновлённый Джарвисом из «Железного человека».
