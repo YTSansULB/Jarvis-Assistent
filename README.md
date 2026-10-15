@@ -1,3 +1,4 @@
+Support: https://t.me/Achancewithoutachance78/1905
 # Jarvis Assistant
 
 > A browser-powered desktop assistant inspired by Iron Man's J.A.R.V.I.S.
