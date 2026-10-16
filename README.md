@@ -26,7 +26,6 @@ This project is in **early stages of development**. Expect bugs, missing feature
 
 ## ⚠️ Current Limitations
 
-- **Russian language only** — UI and commands are currently in Russian. English localization is planned.
 - **Browsers are launched via the default system handler** — Jarvis opens URLs through the OS, which means the browser choice may not always be respected exactly. A more precise launch method is planned.
 - **Windows only** — tested on Windows 10/11. macOS/Linux builds are not available yet.
 - **Text input only** — no voice recognition yet.
