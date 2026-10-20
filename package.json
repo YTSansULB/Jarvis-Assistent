@@ -10,6 +10,7 @@
   "build": {
     "appId": "com.jarvis.assistant",
     "productName": "Jarvis",
+    "publish": null,
     "win": {
       "target": "nsis",
       "icon": "icon.ico"
