@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Jarvis</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: #000;
+    color: #4fd1ff;
+    font-family: 'Consolas', 'Courier New', monospace;
+    height: 100vh;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    transition: background 2s ease;
+  }
+  body.awake { background: radial-gradient(circle at 50% 30%, #0a1929 0%, #000 80%); }
+  body.shutdown { background: #000; }
+  header, #log, footer { opacity: 0; transition: opacity 1.2s ease; }
+  header.visible, #log.visible, footer.visible { opacity: 1; }
+
+  .core {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 400px; height: 400px;
+    margin: -200px 0 0 -200px;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0;
+    transition: opacity 1.5s ease, transform 1.5s ease;
+  }
+  .core.visible { opacity: 1; }
+  .core.shutdown { transform: scale(0.1); opacity: 0; transition: opacity 2s ease, transform 2s ease; }
+
+  .core .ring-outer { position: absolute; inset: 0; border-radius: 50%; border: 1px solid rgba(79, 209, 255, 0.25); box-shadow: 0 0 60px rgba(79, 209, 255, 0.15) inset; animation: spin var(--spin-outer, 20s) linear infinite; }
+  .core .ring-outer::before { content: ''; position: absolute; inset: 20px; border-radius: 50%; border: 1px dashed rgba(79, 209, 255, 0.25); animation: spin var(--spin-outer-rev, 12s) linear infinite reverse; }
+  .core .ring-mid { position: absolute; inset: 50px; border-radius: 50%; border: 2px solid transparent; border-top-color: #4fd1ff; border-right-color: rgba(79, 209, 255, 0.3); box-shadow: 0 0 30px rgba(79, 209, 255, 0.4); animation: spin var(--spin-mid, 4s) linear infinite; opacity: 0; transition: opacity 0.8s ease; }
+  .core .ring-inner { position: absolute; inset: 100px; border-radius: 50%; border: 1px solid rgba(79, 209, 255, 0.3); animation: spin var(--spin-inner, 8s) linear infinite reverse; opacity: 0; transition: opacity 0.8s ease; }
+  .core .ring-inner::before, .core .ring-inner::after { content: ''; position: absolute; width: 8px; height: 8px; background: #4fd1ff; border-radius: 50%; box-shadow: 0 0 12px #4fd1ff, 0 0 24px #4fd1ff; top: -4px; left: 50%; margin-left: -4px; }
+  .core .ring-inner::after { top: auto; bottom: -4px; left: 20%; }
+  .core .pulse { position: absolute; inset: 150px; border-radius: 50%; background: radial-gradient(circle, rgba(79,209,255,0.8) 0%, rgba(79,209,255,0) 70%); opacity: 0; transition: opacity 0.8s ease; animation: pulse 2s ease-in-out infinite; }
+  .core.active .ring-mid, .core.active .ring-inner, .core.active .pulse { opacity: 1; }
+
+  .core.pinging .ring-outer { border-color: rgba(120, 230, 255, 0.8); box-shadow: 0 0 100px rgba(120, 230, 255, 0.5) inset, 0 0 40px rgba(79, 209, 255, 0.6); }
+  .core.pinging .ring-mid { border-top-color: #aef2ff; box-shadow: 0 0 40px rgba(120, 230, 255, 0.8); }
+  .core.pinging .pulse { background: radial-gradient(circle, rgba(180, 245, 255, 1) 0%, rgba(79,209,255,0) 70%); }
+
+  .core.shutting-down .ring-outer { animation: spin 20s linear infinite; border-color: rgba(79, 209, 255, 0.15); box-shadow: 0 0 30px rgba(79, 209, 255, 0.1) inset; }
+  .core.shutting-down .ring-mid { opacity: 0.3; animation: spin 15s linear infinite; }
+  .core.shutting-down .ring-inner { opacity: 0.2; animation: spin 20s linear infinite reverse; }
+  .core.shutting-down .pulse { opacity: 0.2; animation: pulse 4s ease-in-out infinite; }
+
+  .core.boot .ring-outer { animation: spin 3s linear infinite; border-color: rgba(79, 209, 255, 0.7); box-shadow: 0 0 80px rgba(79, 209, 255, 0.4) inset; }
+  .core.boot .ring-outer::before { animation: spin 1.5s linear infinite reverse; border-color: rgba(79, 209, 255, 0.6); }
+  .core.boot .ring-mid { opacity: 1; animation: spin 0.8s linear infinite; }
+  .core.boot .ring-inner { opacity: 1; animation: spin 1.2s linear infinite reverse; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.6; } 50% { transform: scale(1.15); opacity: 1; } }
+
+  header { padding: 20px 30px; border-bottom: 1px solid rgba(79, 209, 255, 0.2); transition: opacity 1.2s ease, text-shadow 2s ease; text-align: center; z-index: 10; }
+  body.shutdown header { text-shadow: none; opacity: 0.2 !important; }
+  #headerTitle { letter-spacing: 4px; text-shadow: 0 0 10px #4fd1ff; font-size: 22px; opacity: 0; transition: opacity 1.2s ease; }
+  #headerTitle.visible { opacity: 1; }
+
+  #log { flex: 1; padding: 20px 30px; overflow-y: auto; z-index: 2; font-size: 15px; line-height: 1.6; transition: opacity 1.2s ease; }
+  .msg { margin-bottom: 10px; animation: fade 0.3s ease; }
+  .msg.user { color: #a9b7c6; }
+  .msg.jarvis { color: #4fd1ff; text-shadow: 0 0 6px rgba(79,209,255,0.5); }
+  .msg.sys { color: #6b7d8f; font-style: italic; font-size: 13px; }
+  .msg .prefix { opacity: 0.6; }
+  .msg.boot-wait { color: #e0a63a; }
+  .msg.boot-done { color: #4ade80; }
+  .msg.boot-fail { color: #ef4444; }
+  .msg.boot-warn { color: #f59e0b; }
+  .msg.shutdown-line { color: #7ee4ff; opacity: 0.85; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } }
+
+  .spinner::after { content: ''; display: inline-block; width: 8px; animation: dots 1.2s steps(4, end) infinite; }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } 100% { content: ''; } }
+
+  #pingPanel { position: absolute; top: calc(50% + 220px); left: 50%; transform: translateX(-50%); width: 480px; max-width: 90vw; background: linear-gradient(160deg, rgba(10, 26, 43, 0.9), rgba(0, 0, 0, 0.9)); border: 1px solid rgba(79, 209, 255, 0.5); border-radius: 12px; padding: 16px 20px; box-shadow: 0 0 40px rgba(79, 209, 255, 0.3); z-index: 3; opacity: 0; pointer-events: none; transition: opacity 0.4s ease; }
+  #pingPanel.visible { opacity: 1; pointer-events: auto; }
+  .ping-header { display: flex; justify-content: space-between; font-size: 12px; letter-spacing: 2px; opacity: 0.7; margin-bottom: 12px; }
+  .ping-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  .ping-stat { text-align: center; padding: 8px 4px; background: rgba(79, 209, 255, 0.05); border: 1px solid rgba(79, 209, 255, 0.2); border-radius: 8px; }
+  .ping-stat .label { font-size: 10px; opacity: 0.6; letter-spacing: 1px; margin-bottom: 4px; }
+  .ping-stat .value { font-size: 18px; font-weight: bold; text-shadow: 0 0 8px rgba(79, 209, 255, 0.6); }
+  .ping-stat .value.good { color: #4ade80; }
+  .ping-stat .value.mid { color: #f59e0b; }
+  .ping-stat .value.bad { color: #ef4444; }
+  .ping-graph { height: 60px; background: rgba(79, 209, 255, 0.03); border: 1px solid rgba(79, 209, 255, 0.2); border-radius: 8px; overflow: hidden; display: flex; align-items: flex-end; gap: 2px; padding: 4px; }
+  .ping-bar { flex: 1; background: linear-gradient(180deg, #7ee4ff, #4fd1ff); border-radius: 2px 2px 0 0; min-height: 2px; transition: height 0.15s ease; box-shadow: 0 0 8px rgba(79, 209, 255, 0.6); }
+  .ping-bar.mid { background: linear-gradient(180deg, #ffc955, #f59e0b); }
+  .ping-bar.bad { background: linear-gradient(180deg, #ff7070, #ef4444); }
+  .ping-bar.timeout { background: rgba(120, 120, 120, 0.4); box-shadow: none; height: 100% !important; opacity: 0.4; }
+
+  footer { padding: 15px 20px 25px; display: flex; gap: 10px; justify-content: center; align-items: center; z-index: 2; border-top: 1px solid rgba(79, 209, 255, 0.15); transition: opacity 1.2s ease; }
+  footer.locked { opacity: 0.3; pointer-events: none; }
+
+  #input { width: 55%; max-width: 700px; padding: 14px 18px; background: rgba(79, 209, 255, 0.05); border: 1px solid rgba(79, 209, 255, 0.4); border-radius: 30px; color: #4fd1ff; font-family: inherit; font-size: 15px; outline: none; transition: 0.2s; }
+  #input:focus { border-color: #4fd1ff; box-shadow: 0 0 20px rgba(79, 209, 255, 0.3); background: rgba(79, 209, 255, 0.08); }
+  #input::placeholder { color: rgba(79, 209, 255, 0.35); }
+
+  button { padding: 14px 22px; border-radius: 30px; background: transparent; color: #4fd1ff; border: 1px solid rgba(79, 209, 255, 0.4); font-family: inherit; font-size: 15px; cursor: pointer; transition: 0.2s; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  button:hover { background: rgba(79, 209, 255, 0.1); box-shadow: 0 0 20px rgba(79, 209, 255, 0.3); }
+
+  #settingsBtn { width: 52px; height: 52px; padding: 0; border-radius: 50%; font-size: 22px; flex-shrink: 0; }
+  #settingsBtn:hover { transform: rotate(90deg); }
+
+  #settings { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); display: none; justify-content: center; align-items: center; z-index: 100; backdrop-filter: blur(6px); }
+  #settings.open { display: flex; }
+  .settings-panel { background: linear-gradient(160deg, #0a1a2b 0%, #000 100%); border: 1px solid rgba(79, 209, 255, 0.5); border-radius: 16px; padding: 30px 35px; width: 640px; max-width: 92vw; max-height: 85vh; overflow-y: auto; box-shadow: 0 0 60px rgba(79, 209, 255, 0.3); color: #4fd1ff; }
+  .settings-panel h2 { font-size: 20px; letter-spacing: 3px; margin-bottom: 25px; text-align: center; text-shadow: 0 0 10px #4fd1ff; }
+  .settings-panel h3 { font-size: 13px; letter-spacing: 2px; color: #7ee4ff; margin: 5px 0 12px; opacity: 0.9; }
+  .settings-row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+  .settings-row label { font-size: 14px; color: #a9b7c6; min-width: 140px; }
+  .lang-buttons { display: flex; gap: 10px; flex: 1; }
+  .lang-buttons button { flex: 1; padding: 12px; font-size: 14px; letter-spacing: 1px; }
+  .lang-buttons button.active { background: rgba(79, 209, 255, 0.2); border-color: #4fd1ff; color: #ffffff; box-shadow: 0 0 20px rgba(79, 209, 255, 0.4); }
+  .divider { height: 1px; background: rgba(79, 209, 255, 0.15); margin: 20px 0; }
+  .settings-footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 25px; }
+  .settings-footer button { flex: 1; }
+  .settings-footer #closeSettings { flex: 2; }
+  .toggle { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .toggle input[type="checkbox"] { appearance: none; width: 42px; height: 22px; background: rgba(79, 209, 255, 0.15); border: 1px solid rgba(79, 209, 255, 0.4); border-radius: 20px; position: relative; cursor: pointer; transition: 0.2s; outline: none; flex-shrink: 0; }
+  .toggle input[type="checkbox"]::after { content: ''; position: absolute; width: 16px; height: 16px; background: #4fd1ff; border-radius: 50%; top: 2px; left: 2px; transition: 0.2s; box-shadow: 0 0 8px #4fd1ff; }
+  .toggle input[type="checkbox"]:checked { background: rgba(79, 209, 255, 0.4); border-color: #4fd1ff; }
+  .toggle input[type="checkbox"]:checked::after { left: 22px; }
+  .toggle span { font-size: 13px; color: #a9b7c6; }
+  .custom-actions { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .custom-actions button { flex: 1; font-size: 13px; padding: 11px 14px; min-width: 130px; }
+  .mods-path { font-size: 11px; color: #6b7d8f; background: rgba(79, 209, 255, 0.04); border: 1px solid rgba(79, 209, 255, 0.15); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; word-break: break-all; font-family: monospace; }
+  .mods-path b { color: #7ee4ff; }
+  .mods-files { font-size: 12px; color: #6b7d8f; margin-bottom: 10px; font-style: italic; }
+  .mods-files span { color: #7ee4ff; font-style: normal; }
+  #customList { max-height: 240px; overflow-y: auto; background: rgba(79, 209, 255, 0.03); border: 1px solid rgba(79, 209, 255, 0.15); border-radius: 10px; padding: 8px; margin-bottom: 8px; }
+  #customList:empty::after { content: 'Пока нет своих команд — создайте первую!'; display: block; text-align: center; color: #6b7d8f; font-style: italic; font-size: 13px; padding: 16px 0; }
+  .custom-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; background: rgba(79, 209, 255, 0.04); border: 1px solid rgba(79, 209, 255, 0.15); border-radius: 8px; margin-bottom: 6px; font-size: 13px; }
+  .custom-item:last-child { margin-bottom: 0; }
+  .custom-item .info { flex: 1; overflow: hidden; }
+  .custom-item .phrase { color: #7ee4ff; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .custom-item .details { color: #6b7d8f; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .custom-item .delete { padding: 6px 10px; font-size: 14px; border-radius: 6px; flex-shrink: 0; min-width: auto; }
+  .custom-item .delete:hover { background: rgba(239, 68, 68, 0.2); border-color: #ef4444; color: #ef4444; }
+
+  #createModal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.9); display: none; justify-content: center; align-items: center; z-index: 200; backdrop-filter: blur(6px); }
+  #createModal.open { display: flex; }
+  .create-panel { background: linear-gradient(160deg, #0a1a2b 0%, #000 100%); border: 1px solid rgba(79, 209, 255, 0.5); border-radius: 16px; padding: 28px 30px; width: 560px; max-width: 92vw; max-height: 88vh; overflow-y: auto; box-shadow: 0 0 60px rgba(79, 209, 255, 0.3); }
+  .create-panel h2 { font-size: 18px; letter-spacing: 3px; margin-bottom: 22px; text-align: center; text-shadow: 0 0 10px #4fd1ff; }
+  .field { margin-bottom: 18px; }
+  .field label { display: block; font-size: 13px; color: #a9b7c6; margin-bottom: 6px; }
+  .field input[type="text"] { width: 100%; padding: 12px 14px; background: rgba(79, 209, 255, 0.05); border: 1px solid rgba(79, 209, 255, 0.4); border-radius: 8px; color: #4fd1ff; font-family: inherit; font-size: 14px; outline: none; transition: 0.2s; }
+  .field input[type="text"]:focus { border-color: #4fd1ff; box-shadow: 0 0 15px rgba(79, 209, 255, 0.3); background: rgba(79, 209, 255, 0.08); }
+  .type-buttons { display: flex; gap: 10px; }
+  .type-buttons button { flex: 1; font-size: 13px; padding: 12px; }
+  .type-buttons button.active { background: rgba(79, 209, 255, 0.2); border-color: #4fd1ff; color: #ffffff; box-shadow: 0 0 15px rgba(79, 209, 255, 0.4); }
+  .file-picker-row { display: flex; gap: 10px; }
+  .file-picker-row input { flex: 1; }
+  .file-picker-row button { flex-shrink: 0; font-size: 13px; padding: 12px 16px; }
+  .create-footer { display: flex; gap: 10px; margin-top: 22px; }
+  .create-footer button { flex: 1; }
+  .create-footer #saveCmd { flex: 2; background: rgba(79, 209, 255, 0.15); border-color: #4fd1ff; }
+  .create-footer #saveCmd:hover { background: rgba(79, 209, 255, 0.25); }
+  .create-error { color: #ef4444; font-size: 13px; font-style: italic; margin-top: 10px; text-align: center; min-height: 18px; }
+</style>
+</head>
+<body>
+
+<audio id="welcomeSound" src="welcome.mp3" preload="auto"></audio>
+<audio id="serviceSound" src="at_your_service_sir.mp3" preload="auto"></audio>
+<audio id="pingDoneSound" src="the_check_is_complete.mp3" preload="auto"></audio>
+
+<div class="core" id="core">
+  <div class="ring-outer"></div>
+  <div class="ring-mid"></div>
+  <div class="ring-inner"></div>
+  <div class="pulse"></div>
+</div>
+
+<div id="pingPanel">
+  <div class="ping-header"><span>📡 NETWORK TEST</span><span id="pingTarget">1.1.1.1</span></div>
+  <div class="ping-stats">
+    <div class="ping-stat"><div class="label">PING</div><div class="value" id="pingValue">— мс</div></div>
+    <div class="ping-stat"><div class="label">JITTER</div><div class="value" id="jitterValue">— мс</div></div>
+    <div class="ping-stat"><div class="label">LOSS</div><div class="value" id="lossValue">— %</div></div>
+  </div>
+  <div class="ping-graph" id="pingGraph"></div>
+</div>
+
+<header id="header"><span id="headerTitle">J A R V I S</span></header>
+
+<div id="log"></div>
+
+<footer id="footer" class="locked">
+  <input id="input" type="text" placeholder="Скажите что-нибудь, сэр..." autocomplete="off" disabled>
+  <button id="settingsBtn" title="Настройки">⚙</button>
+  <button id="send" disabled>ОТПРАВИТЬ</button>
+</footer>
+
+<div id="settings">
+  <div class="settings-panel">
+    <h2 id="settingsTitle">⚙ Н А С Т Р О Й К И</h2>
+    <h3 id="langTitle">🌐 ЯЗЫК / LANGUAGE</h3>
+    <div class="settings-row">
+      <label id="langLabel">Язык интерфейса:</label>
+      <div class="lang-buttons">
+        <button id="langRu" data-lang="ru">🇷🇺 Русский</button>
+        <button id="langEn" data-lang="en">🇬🇧 English</button>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <h3 id="startupTitle">🚀 АВТОЗАПУСК / STARTUP</h3>
+    <div class="settings-row">
+      <label id="autostartLabel">Запуск с Windows:</label>
+      <div class="toggle">
+        <input type="checkbox" id="autostartToggle">
+        <span id="autostartHint">Jarvis будет стартовать вместе с системой</span>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <h3 id="customTitle">🧩 СВОИ КОМАНДЫ / CUSTOM COMMANDS</h3>
+    <div class="mods-path" id="modsPath">📁 Папка mods: <b>...</b></div>
+    <div class="mods-files" id="modsFiles"></div>
+    <div class="custom-actions">
+      <button id="addCmdBtn">➕ Создать</button>
+      <button id="importCmdBtn">📥 Импорт</button>
+      <button id="openModsBtn">📂 Папка</button>
+      <button id="reloadCmdBtn">⟳ Обновить</button>
+    </div>
+    <div id="customList"></div>
+    <div class="divider"></div>
+    <div class="settings-footer"><button id="closeSettings">ЗАКРЫТЬ</button></div>
+  </div>
+</div>
+
+<div id="createModal">
+  <div class="create-panel">
+    <h2 id="createTitle">➕ НОВАЯ КОМАНДА</h2>
+    <div class="field">
+      <label id="phraseLabel">Фраза (что вы скажете):</label>
+      <input type="text" id="cmdPhrase" placeholder="например: открой мой блокнот" autocomplete="off">
+    </div>
+    <div class="field">
+      <label id="typeLabel">Тип действия:</label>
+      <div class="type-buttons">
+        <button id="typeApp" class="active">📁 Открыть приложение</button>
+        <button id="typeUrl">🌐 Открыть сайт</button>
+      </div>
+    </div>
+    <div class="field" id="appField">
+      <label id="appLabel">Выберите приложение:</label>
+      <div class="file-picker-row">
+        <input type="text" id="cmdAppPath" placeholder="путь к .exe" readonly>
+        <button id="pickAppBtn">📁 Выбрать</button>
+      </div>
+    </div>
+    <div class="field" id="urlField" style="display:none;">
+      <label id="urlLabel">Адрес сайта:</label>
+      <input type="text" id="cmdUrl" placeholder="https://example.com" autocomplete="off">
+    </div>
+    <div class="create-error" id="createError"></div>
+    <div class="create-footer">
+      <button id="cancelCmd">ОТМЕНА</button>
+      <button id="saveCmd">СОХРАНИТЬ</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const fs    = require('fs');
+  const path  = require('path');
+  const { shell, app, ipcRenderer } = require('electron');
+
+  const logEl = document.getElementById('log');
+  const inputEl = document.getElementById('input');
+  const sendBtn = document.getElementById('send');
+  const coreEl = document.getElementById('core');
+  const headerEl = document.getElementById('headerTitle');
+  const footerEl = document.getElementById('footer');
+  const bodyEl = document.body;
+  const soundEl = document.getElementById('welcomeSound');
+
+  const settingsBtn = document.getElementById('settingsBtn');
+  const settingsModal = document.getElementById('settings');
+  const closeSettings = document.getElementById('closeSettings');
+  const langRu = document.getElementById('langRu');
+  const langEn = document.getElementById('langEn');
+  const settingsTitle = document.getElementById('settingsTitle');
+  const langTitle = document.getElementById('langTitle');
+  const langLabel = document.getElementById('langLabel');
+  const startupTitle = document.getElementById('startupTitle');
+  const autostartLabel = document.getElementById('autostartLabel');
+  const autostartToggle = document.getElementById('autostartToggle');
+  const autostartHint = document.getElementById('autostartHint');
+  const customTitle = document.getElementById('customTitle');
+  const addCmdBtn = document.getElementById('addCmdBtn');
+  const importCmdBtn = document.getElementById('importCmdBtn');
+  const openModsBtn = document.getElementById('openModsBtn');
+  const reloadCmdBtn = document.getElementById('reloadCmdBtn');
+  const customList = document.getElementById('customList');
+  const modsPath = document.getElementById('modsPath');
+  const modsFiles = document.getElementById('modsFiles');
+
+  const createModal = document.getElementById('createModal');
+  const createTitle = document.getElementById('createTitle');
+  const phraseLabel = document.getElementById('phraseLabel');
+  const cmdPhrase = document.getElementById('cmdPhrase');
+  const typeLabel = document.getElementById('typeLabel');
+  const typeApp = document.getElementById('typeApp');
+  const typeUrl = document.getElementById('typeUrl');
+  const appField = document.getElementById('appField');
+  const appLabel = document.getElementById('appLabel');
+  const cmdAppPath = document.getElementById('cmdAppPath');
+  const pickAppBtn = document.getElementById('pickAppBtn');
+  const urlField = document.getElementById('urlField');
+  const urlLabel = document.getElementById('urlLabel');
+  const cmdUrl = document.getElementById('cmdUrl');
+  const createError = document.getElementById('createError');
+  const cancelCmd = document.getElementById('cancelCmd');
+  const saveCmd = document.getElementById('saveCmd');
+
+  const pingPanel = document.getElementById('pingPanel');
+  const pingValue = document.getElementById('pingValue');
+  const jitterValue = document.getElementById('jitterValue');
+  const lossValue = document.getElementById('lossValue');
+  const pingGraph = document.getElementById('pingGraph');
+  const pingTarget = document.getElementById('pingTarget');
+
+  const state = {
+    awaitingBrowserChoice: false,
+    pendingUrl: null,
+    booting: true,
+    online: false,
+    shuttingDown: false,
+    pinging: false,
+    pingInterval: null,
+    pingStats: { values: [], lost: 0, total: 0 },
+    lang: 'ru',
+    customCommands: [],
+    createForm: { type: 'app' }
+  };
+
+  const TRANSLATIONS = {
+    ru: {
+      settingsTitle: '⚙ Н А С Т Р О Й К И', langTitle: '🌐 ЯЗЫК / LANGUAGE', langLabel: 'Язык интерфейса:',
+      startupTitle: '🚀 АВТОЗАПУСК', autostartLabel: 'Запуск с Windows:', autostartHint: 'Jarvis будет стартовать вместе с системой',
+      autostartOn: '✅ Автозапуск включён.', autostartOff: '❌ Автозапуск выключен.', autostartError: '⚠ Не удалось изменить автозапуск',
+      customTitle: '🧩 СВОИ КОМАНДЫ', addCmdBtn: '➕ Создать', importCmdBtn: '📥 Импорт', openModsBtn: '📂 Папка', reloadCmdBtn: '⟳ Обновить',
+      createTitle: '➕ НОВАЯ КОМАНДА', phraseLabel: 'Фраза (что вы скажете):', typeLabel: 'Тип действия:',
+      typeApp: '📁 Открыть приложение', typeUrl: '🌐 Открыть сайт', appLabel: 'Выберите приложение:', urlLabel: 'Адрес сайта:',
+      pickApp: '📁 Выбрать', cancelBtn: 'ОТМЕНА', saveBtn: 'СОХРАНИТЬ',
+      errEmptyPhrase: 'Введите фразу', errNoApp: 'Выберите приложение', errNoUrl: 'Введите URL сайта', errBadUrl: 'URL должен начинаться с http:// или https://',
+      customSaved: '✅ Команда сохранена.', customDeleted: '🗑 Команда удалена.', customLoaded: '🧩 Загружено своих команд: ', customError: '⚠ Ошибка: ',
+      importOk: '📥 Импортировано: ', importErr: '⚠ Ошибка импорта: ',
+      closeBtn: 'ЗАКРЫТЬ', settingsBtnTooltip: 'Настройки',
+      inputPlaceholder: 'Скажите что-нибудь, сэр...', sendBtn: 'ОТПРАВИТЬ',
+      boot1: 'Подача питания на шину', boot2: 'Инициализация ядра', boot3: 'Проверка целостности памяти', boot4: 'Загрузка модулей',
+      boot5: 'Запуск реактора', boot6: 'Калибровка сенсоров', boot7: 'Сканирование оборудования', boot8: 'Проверка соединения...',
+      boot9: 'Подключение к сети', boot10: 'Нет подключения к сети', boot11: 'Работа в автономном режиме', boot12: 'Стабилизация реактора', boot13: 'Все системы в норме',
+      welcomeBack: 'С возвращением, сэр.', tryCommands: 'Попробуйте: "открой ютуб", "открой стим", "открой дискорд" или "открой роблокс"',
+      pingHint: 'Напишите "пинг" чтобы проверить интернет', shutdownHint: 'Напишите "выключение" чтобы завершить работу',
+      noInternetHint: 'Сети нет — команды запуска приложений могут не работать.',
+      shutdownMsg: 'Завершаю работу, сэр. До связи.', shutdownSteps: ['Завершение фоновых процессов...', 'Отключение модулей...', 'Сохранение состояния...', 'Отключение сенсоров...', 'Остановка реактора...', 'Отключение питания...'], shutdownDone: 'Система выключена.',
+      searchingSteam: 'Ищу Steam на ПК, сэр...', steamNotFound: 'Steam не найден. Открываю store.steampowered.com.', launchingSteam: 'К вашим услугам, сэр.',
+      searchingRoblox: 'Ищу Roblox на ПК, сэр...', robloxNotFound: 'Roblox не найден. Открываю roblox.com.', launchingRoblox: 'К вашим услугам, сэр.',
+      discordNotFound: 'Discord не найден. Открываю веб-версию.', launchingDiscord: 'К вашим услугам, сэр.',
+      noBrowsersFound: 'Не нашёл ни одного браузера, сэр.', chooseBrowser: 'Какой браузер использовать? Найдены:', browserHint: 'Напишите название (например: opera). Скажите "запомни" — чтобы не спрашивал.',
+      openingYoutubeIn: 'Открываю YouTube в', browserNotUnderstood: 'Не понял, сэр. Напишите название браузера из списка.', understoodUsing: 'Понял, использую',
+      rememberedBrowser: 'Запомнил: ', defaultBrowser: ' — браузер по умолчанию.', youtubeOpened: 'К вашим услугам, сэр.',
+      greeting: 'Здравствуйте, сэр. Чем могу помочь?',
+      helpTitle: 'Доступные команды:', helpSteam: '• "открой стим" — запустить Steam', helpRoblox: '• "открой роблокс" — запустить Roblox',
+      helpYoutube: '• "открой ютуб" — открыть youtube.com', helpDiscord: '• "открой дискорд" — запустить Discord',
+      helpPing: '• "пинг" — тест интернета', helpStopPing: '• "стоп пинг" — остановить тест', helpHello: '• "привет" — поздороваться',
+      helpResetBrowser: '• "сбрось браузер" — забыть браузер', helpShutdown: '• "выключение" — выключить Jarvis', helpHelp: '• "помощь" — этот список',
+      browserReset: 'Хорошо, сэр. В следующий раз снова спрошу.', notRecognized: 'Простите, сэр, я не распознал команду. Скажите "помощь".',
+      errorLaunch: 'Ошибка запуска: ', errorBrowser: 'Ошибка запуска браузера: ', tryingSite: 'Пробую открыть сайт.',
+      pingingStart: 'Запускаю тест сети, сэр. Реактор раскручивается...', pingingAlready: 'Тест уже идёт, сэр.', pingingStop: 'Проверка завершена, сэр.',
+      prefixUser: '> Вы: ', prefixJarvis: '> Jarvis: '
+    },
+    en: {
+      settingsTitle: '⚙ S E T T I N G S', langTitle: '🌐 LANGUAGE', langLabel: 'Interface language:',
+      startupTitle: '🚀 STARTUP', autostartLabel: 'Launch with Windows:', autostartHint: 'Jarvis will start with the system',
+      autostartOn: '✅ Autostart enabled.', autostartOff: '❌ Autostart disabled.', autostartError: '⚠ Failed to change autostart',
+      customTitle: '🧩 CUSTOM COMMANDS', addCmdBtn: '➕ Create', importCmdBtn: '📥 Import', openModsBtn: '📂 Folder', reloadCmdBtn: '⟳ Reload',
+      createTitle: '➕ NEW COMMAND', phraseLabel: 'Phrase (what you say):', typeLabel: 'Action type:',
+      typeApp: '📁 Open application', typeUrl: '🌐 Open website', appLabel: 'Choose application:', urlLabel: 'Website URL:',
+      pickApp: '📁 Pick', cancelBtn: 'CANCEL', saveBtn: 'SAVE',
+      errEmptyPhrase: 'Enter a phrase', errNoApp: 'Choose an application', errNoUrl: 'Enter website URL', errBadUrl: 'URL must start with http:// or https://',
+      customSaved: '✅ Command saved.', customDeleted: '🗑 Command deleted.', customLoaded: '🧩 Custom commands loaded: ', customError: '⚠ Error: ',
+      importOk: '📥 Imported: ', importErr: '⚠ Import error: ',
+      closeBtn: 'CLOSE', settingsBtnTooltip: 'Settings',
+      inputPlaceholder: 'Say something, sir...', sendBtn: 'SEND',
+      boot1: 'Powering up the bus', boot2: 'Initializing core', boot3: 'Checking memory integrity', boot4: 'Loading modules',
+      boot5: 'Starting reactor', boot6: 'Calibrating sensors', boot7: 'Scanning hardware', boot8: 'Checking connection...',
+      boot9: 'Network connected', boot10: 'No network connection', boot11: 'Running in offline mode', boot12: 'Stabilizing reactor', boot13: 'All systems nominal',
+      welcomeBack: 'Welcome back, sir.', tryCommands: 'Try: "open youtube", "open steam", "open discord" or "open roblox"',
+      pingHint: 'Type "ping" to test your internet', shutdownHint: 'Type "shutdown" to power off Jarvis',
+      noInternetHint: 'No network — app launch commands may not work.',
+      shutdownMsg: 'Shutting down, sir. See you soon.', shutdownSteps: ['Terminating background processes...', 'Disabling modules...', 'Saving state...', 'Disabling sensors...', 'Stopping reactor...', 'Cutting power...'], shutdownDone: 'System powered off.',
+      searchingSteam: 'Searching for Steam, sir...', steamNotFound: 'Steam not found. Opening store.steampowered.com.', launchingSteam: 'At your service, sir.',
+      searchingRoblox: 'Searching for Roblox, sir...', robloxNotFound: 'Roblox not found. Opening roblox.com.', launchingRoblox: 'At your service, sir.',
+      discordNotFound: 'Discord not found. Opening web version.', launchingDiscord: 'At your service, sir.',
+      noBrowsersFound: 'No browsers found, sir.', chooseBrowser: 'Which browser should I use? Found:', browserHint: 'Type the name (e.g. opera). Say "remember" to skip next time.',
+      openingYoutubeIn: 'Opening YouTube in', browserNotUnderstood: "Didn't catch that, sir.", understoodUsing: 'Understood, using',
+      rememberedBrowser: 'Remembered: ', defaultBrowser: ' — default browser.', youtubeOpened: 'At your service, sir.',
+      greeting: 'Hello, sir. How can I help?',
+      helpTitle: 'Available commands:', helpSteam: '• "open steam" — launch Steam', helpRoblox: '• "open roblox" — launch Roblox',
+      helpYoutube: '• "open youtube" — open youtube.com', helpDiscord: '• "open discord" — launch Discord',
+      helpPing: '• "ping" — network test', helpStopPing: '• "stop ping" — stop the test', helpHello: '• "hello" — greet Jarvis',
+      helpResetBrowser: '• "reset browser" — forget browser', helpShutdown: '• "shutdown" — power off Jarvis', helpHelp: '• "help" — this list',
+      browserReset: 'Alright, sir. I will ask again next time.', notRecognized: "Sorry, sir, I didn't recognize the command.",
+      errorLaunch: 'Launch error: ', errorBrowser: 'Browser launch error: ', tryingSite: 'Trying to open the website.',
+      pingingStart: 'Starting network test, sir...', pingingAlready: 'Test is already running, sir.', pingingStop: 'The check is complete, sir.',
+      prefixUser: '> You: ', prefixJarvis: '> Jarvis: '
+    }
+  };
+
+  function t(key) { return TRANSLATIONS[state.lang][key]; }
+
+  const CONFIG_PATH = path.join(process.cwd(), 'jarvis-config.json');
+  const defaultConfig = { preferredBrowser: null, lang: 'ru' };
+
+  function loadConfig() {
+    try { if (fs.existsSync(CONFIG_PATH)) return Object.assign({}, defaultConfig, JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))); } catch (e) {}
+    return Object.assign({}, defaultConfig);
+  }
+  function saveConfig(cfg) { try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf-8'); } catch (e) {} }
+  let config = loadConfig();
+  state.lang = config.lang || 'ru';
+
+  function say(who, text) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + who;
+    const prefix = who === 'user' ? t('prefixUser') : who === 'jarvis' ? t('prefixJarvis') : '> ';
+    div.innerHTML = `<span class="prefix">${prefix}</span>${text}`;
+    logEl.appendChild(div);
+    logEl.scrollTop = logEl.scrollHeight;
+    return div;
+  }
+
+  function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+  async function playServiceSound() { try { const s = document.getElementById('serviceSound'); if (s) { s.currentTime = 0; s.volume = 0.85; await s.play(); } } catch (e) {} }
+  async function playPingDoneSound() { try { const s = document.getElementById('pingDoneSound'); if (s) { s.currentTime = 0; s.volume = 0.85; await s.play(); } } catch (e) {} }
+
+  function applyLanguage() {
+    inputEl.placeholder = t('inputPlaceholder'); sendBtn.textContent = t('sendBtn');
+    settingsTitle.textContent = t('settingsTitle'); langTitle.textContent = t('langTitle'); langLabel.textContent = t('langLabel');
+    startupTitle.textContent = t('startupTitle'); autostartLabel.textContent = t('autostartLabel'); autostartHint.textContent = t('autostartHint');
+    customTitle.textContent = t('customTitle'); addCmdBtn.textContent = t('addCmdBtn'); importCmdBtn.textContent = t('importCmdBtn');
+    openModsBtn.textContent = t('openModsBtn'); reloadCmdBtn.textContent = t('reloadCmdBtn'); createTitle.textContent = t('createTitle');
+    phraseLabel.textContent = t('phraseLabel'); typeLabel.textContent = t('typeLabel'); typeApp.textContent = t('typeApp'); typeUrl.textContent = t('typeUrl');
+    appLabel.textContent = t('appLabel'); urlLabel.textContent = t('urlLabel'); pickAppBtn.textContent = t('pickApp');
+    cancelCmd.textContent = t('cancelBtn'); saveCmd.textContent = t('saveBtn'); closeSettings.textContent = t('closeBtn');
+    settingsBtn.title = t('settingsBtnTooltip');
+    langRu.classList.toggle('active', state.lang === 'ru');
+    langEn.classList.toggle('active', state.lang === 'en');
+    document.documentElement.lang = state.lang;
+  }
+
+  function setLanguage(lang) {
+    if (lang === state.lang) return;
+    state.lang = lang; config.lang = lang; saveConfig(config); applyLanguage(); renderCustomList();
+    if (lang === 'ru') say('sys', '🌐 Язык переключён на русский.');
+    else say('sys', '🌐 Language switched to English.');
+  }
+
+  langRu.addEventListener('click', () => setLanguage('ru'));
+  langEn.addEventListener('click', () => setLanguage('en'));
+
+  function openSettings() { settingsModal.classList.add('open'); loadCustomCommands(); }
+  function closeSettingsFn() { settingsModal.classList.remove('open'); }
+  settingsBtn.addEventListener('click', openSettings);
+  closeSettings.addEventListener('click', closeSettingsFn);
+  settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) closeSettingsFn(); });
+
+  async function initAutostart() {
+    try { const enabled = await ipcRenderer.invoke('get-autostart'); autostartToggle.checked = enabled; } catch (e) { autostartToggle.checked = false; }
+  }
+  autostartToggle.addEventListener('change', async () => {
+    const want = autostartToggle.checked;
+    try {
+      const result = await ipcRenderer.invoke('set-autostart', want);
+      autostartToggle.checked = result;
+      if (result) say('jarvis', t('autostartOn'));
+      else { say('jarvis', t('autostartOff')); say('sys', t('autostartError')); }
+    } catch (e) { autostartToggle.checked = !want; say('sys', t('autostartError')); }
+  });
+
+  async function loadCustomCommands() {
+    try {
+      const data = await ipcRenderer.invoke('load-custom-commands');
+      state.customCommands = (data && Array.isArray(data.commands)) ? data.commands : [];
+      if (data && data.modsDir) modsPath.innerHTML = '📁 Папка mods: <b>' + data.modsDir + '</b>';
+      if (data && data.files) {
+        if (data.files.length === 0) modsFiles.textContent = 'файлов .jarv пока нет';
+        else modsFiles.innerHTML = 'Файлы: ' + data.files.map(f => `<span>${f.file}</span> (${f.count})`).join(', ');
+      }
+      renderCustomList();
+    } catch (e) { state.customCommands = []; renderCustomList(); }
+  }
+
+  async function saveCustomCommands() {
+    try { const result = await ipcRenderer.invoke('save-custom-commands', { commands: state.customCommands }); return result && result.ok; } catch (e) { return false; }
+  }
+
+  function renderCustomList() {
+    customList.innerHTML = '';
+    state.customCommands.forEach((cmd, idx) => {
+      const item = document.createElement('div');
+      item.className = 'custom-item';
+      const info = document.createElement('div'); info.className = 'info';
+      const phrase = document.createElement('div'); phrase.className = 'phrase'; phrase.textContent = '💬 ' + cmd.phrase;
+      const details = document.createElement('div'); details.className = 'details';
+      details.textContent = cmd.type === 'app' ? '📁 ' + (cmd.appPath || '?') : '🌐 ' + (cmd.url || '?');
+      info.appendChild(phrase); info.appendChild(details);
+      const delBtn = document.createElement('button'); delBtn.className = 'delete'; delBtn.textContent = '🗑'; delBtn.title = 'Удалить';
+      delBtn.addEventListener('click', () => deleteCustomCommand(idx));
+      item.appendChild(info); item.appendChild(delBtn);
+      customList.appendChild(item);
+    });
+  }
+
+  async function deleteCustomCommand(idx) {
+    if (idx < 0 || idx >= state.customCommands.length) return;
+    state.customCommands.splice(idx, 1);
+    await saveCustomCommands();
+    renderCustomList();
+    say('jarvis', t('customDeleted'));
+  }
+
+  reloadCmdBtn.addEventListener('click', async () => { await loadCustomCommands(); say('sys', `${t('customLoaded')}${state.customCommands.length}`); });
+  openModsBtn.addEventListener('click', async () => { try { const result = await ipcRenderer.invoke('open-mods-dir'); if (result && result.ok) say('sys', `📂 Открываю: ${result.dir}`); } catch (e) {} });
+  importCmdBtn.addEventListener('click', async () => {
+    try {
+      const result = await ipcRenderer.invoke('import-jarv');
+      if (result && result.ok) {
+        let msg = `${t('importOk')}${result.fileName} (+${result.count}`;
+        if (result.skipped > 0) msg += `, пропущено: ${result.skipped}`;
+        msg += `). Всего: ${result.total}`;
+        say('jarvis', msg);
+        await loadCustomCommands();
+      } else if (result && result.error) say('sys', `${t('importErr')}${result.error}`);
+    } catch (e) { say('sys', `${t('importErr')}${e.message}`); }
+  });
+
+  addCmdBtn.addEventListener('click', () => openCreateModal());
+  function openCreateModal() {
+    state.createForm = { type: 'app' };
+    cmdPhrase.value = ''; cmdAppPath.value = ''; cmdUrl.value = ''; createError.textContent = '';
+    setCreateType('app');
+    createModal.classList.add('open');
+    setTimeout(() => cmdPhrase.focus(), 100);
+  }
+  function closeCreateModal() { createModal.classList.remove('open'); }
+  function setCreateType(type) {
+    state.createForm.type = type;
+    typeApp.classList.toggle('active', type === 'app');
+    typeUrl.classList.toggle('active', type === 'url');
+    appField.style.display = type === 'app' ? '' : 'none';
+    urlField.style.display = type === 'url' ? '' : 'none';
+    createError.textContent = '';
+  }
+  typeApp.addEventListener('click', () => setCreateType('app'));
+  typeUrl.addEventListener('click', () => setCreateType('url'));
+  cancelCmd.addEventListener('click', closeCreateModal);
+  createModal.addEventListener('click', (e) => { if (e.target === createModal) closeCreateModal(); });
+  pickAppBtn.addEventListener('click', async () => { try { const picked = await ipcRenderer.invoke('pick-exe'); if (picked) cmdAppPath.value = picked; } catch (e) {} });
+  saveCmd.addEventListener('click', async () => {
+    const phrase = cmdPhrase.value.trim();
+    if (!phrase) { createError.textContent = t('errEmptyPhrase'); return; }
+    const newCmd = { phrase };
+    if (state.createForm.type === 'app') {
+      const appPath = cmdAppPath.value.trim();
+      if (!appPath) { createError.textContent = t('errNoApp'); return; }
+      newCmd.type = 'app'; newCmd.appPath = appPath;
+    } else {
+      let url = cmdUrl.value.trim();
+      if (!url) { createError.textContent = t('errNoUrl'); return; }
+      if (!/^https?:\/\//i.test(url)) { createError.textContent = t('errBadUrl'); return; }
+      newCmd.type = 'url'; newCmd.url = url;
+    }
+    state.customCommands.push(newCmd);
+    const ok = await saveCustomCommands();
+    if (ok) {
+      say('jarvis', t('customSaved'));
+      say('sys', `💬 "${phrase}" → ${newCmd.type === 'app' ? '📁 ' + newCmd.appPath : '🌐 ' + newCmd.url}`);
+      renderCustomList(); closeCreateModal();
+    } else createError.textContent = t('customError') + 'save failed';
+  });
+
+  async function runCustomCommand(cmd) {
+    if (cmd.type === 'app') {
+      try { const { spawn } = require('child_process'); spawn(cmd.appPath, [], { detached: true, stdio: 'ignore' }).unref(); say('jarvis', t('youtubeOpened')); playServiceSound(); }
+      catch (e) { say('sys', t('errorLaunch') + e.message); }
+    } else if (cmd.type === 'url') {
+      try { await shell.openExternal(cmd.url); say('jarvis', t('youtubeOpened')); playServiceSound(); }
+      catch (e) { say('sys', t('errorBrowser') + e.message); }
+    }
+  }
+
+  async function checkInternet(timeoutMs = 3000) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+    const testUrls = ['https://www.google.com/generate_204', 'https://cloudflare.com/cdn-cgi/trace', 'https://1.1.1.1'];
+    for (const url of testUrls) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        await fetch(url, { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
+        clearTimeout(timer);
+        return true;
+      } catch (e) {}
+    }
+    return false;
+  }
+
+  async function bootStep(text, workMs = 400, finalState = 'done', finalText = null) {
+    const line = document.createElement('div');
+    line.className = 'msg boot-wait spinner';
+    line.innerHTML = `<span class="marker">[ ]</span> ${text}`;
+    logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+    await sleep(workMs);
+    line.classList.remove('boot-wait', 'spinner');
+    if (finalState === 'done') { line.classList.add('boot-done'); line.innerHTML = `<span class="marker">[✓]</span> ${finalText || text}`; }
+    else if (finalState === 'fail') { line.classList.add('boot-fail'); line.innerHTML = `<span class="marker">[✗]</span> ${finalText || text}`; }
+    else if (finalState === 'warn') { line.classList.add('boot-warn'); line.innerHTML = `<span class="marker">[!]</span> ${finalText || text}`; }
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  async function bootSequence() {
+    await sleep(1000); logEl.classList.add('visible'); await sleep(300);
+    await bootStep(t('boot1'), 500); await bootStep(t('boot2'), 600); await bootStep(t('boot3'), 550); await bootStep(t('boot4'), 500);
+    coreEl.classList.add('visible', 'boot'); await sleep(400);
+    await bootStep(t('boot5'), 800); await bootStep(t('boot6'), 500); await bootStep(t('boot7'), 600);
+    const line = document.createElement('div');
+    line.className = 'msg boot-wait spinner';
+    line.innerHTML = `<span class="marker">[ ]</span> ${t('boot8')}`;
+    logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+    const online = await checkInternet(3000); state.online = online;
+    line.classList.remove('boot-wait', 'spinner');
+    if (online) { line.classList.add('boot-done'); line.innerHTML = `<span class="marker">[✓]</span> ${t('boot9')}`; }
+    else { line.classList.add('boot-fail'); line.innerHTML = `<span class="marker">[✗]</span> ${t('boot10')}`; }
+    logEl.scrollTop = logEl.scrollHeight;
+    if (!online) {
+      await sleep(300);
+      const warn = document.createElement('div'); warn.className = 'msg boot-warn';
+      warn.innerHTML = `<span class="marker">[!]</span> ${t('boot11')}`;
+      logEl.appendChild(warn); logEl.scrollTop = logEl.scrollHeight;
+    }
+    coreEl.classList.remove('boot'); coreEl.classList.add('active'); await sleep(600);
+    await bootStep(t('boot12'), 500); headerEl.classList.add('visible'); await sleep(500); await bootStep(t('boot13'), 400);
+    bodyEl.classList.add('awake'); await sleep(800);
+    footerEl.classList.add('visible'); await sleep(600);
+    footerEl.classList.remove('locked');
+    inputEl.disabled = false; sendBtn.disabled = false; state.booting = false;
+    try { if (soundEl) { soundEl.volume = 0.85; await soundEl.play(); } } catch (e) {}
+    await Promise.race([new Promise(res => soundEl.addEventListener('ended', res, { once: true })), sleep(3000)]);
+    say('jarvis', t('welcomeBack'));
+    if (state.online) { say('sys', t('tryCommands')); say('sys', t('pingHint')); say('sys', t('shutdownHint')); }
+    else say('sys', t('noInternetHint'));
+    await loadCustomCommands();
+    if (state.customCommands.length > 0) say('sys', `${t('customLoaded')}${state.customCommands.length}`);
+    inputEl.focus();
+  }
+
+  async function measurePing(url, timeoutMs = 3000) {
+    const start = performance.now();
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const testUrl = url + (url.includes('?') ? '&' : '?') + '_=' + Date.now();
+      await fetch(testUrl, { method: 'HEAD', mode: 'no-cors', signal: controller.signal, cache: 'no-store' });
+      clearTimeout(timer);
+      return Math.round(performance.now() - start);
+    } catch (e) { return null; }
+  }
+
+  function updateSpinSpeed(ping) {
+    let factor;
+    if (ping === null) factor = 3;
+    else if (ping < 50) factor = 0.15;
+    else if (ping < 100) factor = 0.3;
+    else if (ping < 200) factor = 0.6;
+    else if (ping < 500) factor = 1.0;
+    else factor = 1.8;
+    coreEl.style.setProperty('--spin-outer', (20 * factor).toFixed(2) + 's');
+    coreEl.style.setProperty('--spin-outer-rev', (12 * factor).toFixed(2) + 's');
+    coreEl.style.setProperty('--spin-mid', (4 * factor).toFixed(2) + 's');
+    coreEl.style.setProperty('--spin-inner', (8 * factor).toFixed(2) + 's');
+  }
+
+  function addPingBar(ping, maxScale = 500) {
+    const bar = document.createElement('div'); bar.className = 'ping-bar';
+    if (ping === null) { bar.classList.add('timeout'); bar.style.height = '100%'; }
+    else {
+      const h = Math.min(100, (ping / maxScale) * 100);
+      bar.style.height = Math.max(4, h) + '%';
+      if (ping >= 80 && ping < 200) bar.classList.add('mid');
+      else if (ping >= 200) bar.classList.add('bad');
+    }
+    pingGraph.appendChild(bar);
+    while (pingGraph.children.length > 40) pingGraph.removeChild(pingGraph.firstChild);
+  }
+
+  function colorPing(el, ping) {
+    el.classList.remove('good', 'mid', 'bad');
+    if (ping === null) { el.classList.add('bad'); return; }
+    if (ping < 80) el.classList.add('good');
+    else if (ping < 200) el.classList.add('mid');
+    else el.classList.add('bad');
+  }
+
+  function computeJitter(values) {
+    if (values.length < 2) return null;
+    let sum = 0;
+    for (let i = 1; i < values.length; i++) sum += Math.abs(values[i] - values[i - 1]);
+    return Math.round(sum / (values.length - 1));
+  }
+
+  async function doPing() {
+    const targets = [
+      { url: 'https://1.1.1.1', name: '1.1.1.1' },
+      { url: 'https://www.google.com/generate_204', name: 'google.com' },
+      { url: 'https://cloudflare.com/cdn-cgi/trace', name: 'cloudflare.com' }
+    ];
+    let chosenTarget = targets[0];
+    for (const tg of targets) { const test = await measurePing(tg.url, 2500); if (test !== null) { chosenTarget = tg; break; } }
+    pingTarget.textContent = chosenTarget.name;
+    state.pingStats.values = []; state.pingStats.lost = 0; state.pingStats.total = 0; pingGraph.innerHTML = '';
+    const doOnePing = async () => {
+      if (!state.pinging) return;
+      const ping = await measurePing(chosenTarget.url, 3000);
+      state.pingStats.total++;
+      if (ping === null) state.pingStats.lost++;
+      else { state.pingStats.values.push(ping); if (state.pingStats.values.length > 20) state.pingStats.values.shift(); }
+      if (ping !== null) {
+        pingValue.textContent = ping + ' мс'; colorPing(pingValue, ping);
+        const jitter = computeJitter(state.pingStats.values);
+        jitterValue.textContent = (jitter !== null ? jitter : '—') + ' мс';
+        if (jitter !== null) colorPing(jitterValue, jitter);
+        updateSpinSpeed(ping);
+      } else { pingValue.textContent = '—'; colorPing(pingValue, null); updateSpinSpeed(null); }
+      const lossPercent = Math.round((state.pingStats.lost / state.pingStats.total) * 100);
+      lossValue.textContent = lossPercent + ' %';
+      lossValue.classList.remove('good', 'mid', 'bad');
+      if (lossPercent === 0) lossValue.classList.add('good');
+      else if (lossPercent < 20) lossValue.classList.add('mid');
+      else lossValue.classList.add('bad');
+      addPingBar(ping);
+      if (state.pingStats.total % 5 === 0) {
+        const avg = state.pingStats.values.length > 0 ? Math.round(state.pingStats.values.reduce((a, b) => a + b, 0) / state.pingStats.values.length) : '—';
+        say('sys', `📡 #${state.pingStats.total} · ${ping !== null ? ping : 'timeout'} ms · avg: ${avg} ms · loss: ${lossPercent}%`);
+      }
+    };
+    await doOnePing();
+    state.pingInterval = setInterval(doOnePing, 800);
+  }
+
+  async function startPing() {
+    if (state.pinging) { say('jarvis', t('pingingAlready')); return; }
+    state.pinging = true; say('jarvis', t('pingingStart'));
+    coreEl.classList.add('pinging'); pingPanel.classList.add('visible');
+    pingValue.textContent = '— мс'; jitterValue.textContent = '— мс'; lossValue.textContent = '— %';
+    pingValue.className = 'value'; jitterValue.className = 'value'; lossValue.className = 'value';
+    pingGraph.innerHTML = '';
+    await sleep(400);
+    await doPing();
+  }
+
+  function stopPing(silent = false) {
+    if (!state.pinging) return;
+    state.pinging = false;
+    if (state.pingInterval) { clearInterval(state.pingInterval); state.pingInterval = null; }
+    coreEl.classList.remove('pinging');
+    updateSpinSpeed(100);
+    pingPanel.classList.remove('visible');
+    if (!silent) { say('jarvis', t('pingingStop')); playPingDoneSound(); }
+  }
+
+  async function shutdown() {
+    if (state.shuttingDown) return;
+    state.shuttingDown = true; state.booting = true;
+    stopPing(true);
+    say('jarvis', t('shutdownMsg'));
+    await sleep(600);
+    inputEl.disabled = true; sendBtn.disabled = true;
+    footerEl.classList.add('locked');
+    coreEl.classList.remove('active'); coreEl.classList.add('shutting-down');
+    const steps = t('shutdownSteps'); const delays = [400, 350, 350, 350, 500, 500];
+    for (let i = 0; i < steps.length; i++) {
+      const line = document.createElement('div'); line.className = 'msg shutdown-line';
+      line.innerHTML = `<span style="opacity:0.7;">[·]</span> ${steps[i]}`;
+      logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+      await sleep(delays[i]);
+    }
+    const finalLine = document.createElement('div'); finalLine.className = 'msg shutdown-line';
+    finalLine.style.color = '#7ee4ff'; finalLine.style.fontWeight = 'bold';
+    finalLine.innerHTML = `<span style="opacity:0.7;">[✓]</span> ${t('shutdownDone')}`;
+    logEl.appendChild(finalLine); logEl.scrollTop = logEl.scrollHeight;
+    await sleep(500);
+    bodyEl.classList.add('shutdown'); footerEl.style.opacity = '0'; headerEl.style.opacity = '0';
+    pingPanel.style.opacity = '0'; logEl.style.opacity = '0'; coreEl.classList.add('shutdown');
+    await sleep(2000);
+    try { window.close(); } catch (e) {}
+    try { if (app && typeof app.quit === 'function') app.quit(); } catch (e) {}
+    setTimeout(() => { try { process.exit(0); } catch (e) {} }, 1000);
+  }
+
+  function findBrowsers() {
+    const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+    const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    const localAppData = process.env['LOCALAPPDATA'] || '';
+    const candidates = [
+      { key: 'chrome', name: 'Google Chrome', paths: [path.join(programFiles, 'Google\\Chrome\\Application\\chrome.exe'), path.join(programFilesX86, 'Google\\Chrome\\Application\\chrome.exe'), path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe')] },
+      { key: 'opera', name: 'Opera', paths: [path.join(localAppData, 'Programs\\Opera\\launcher.exe'), path.join(localAppData, 'Programs\\Opera\\opera.exe'), path.join(programFiles, 'Opera\\launcher.exe')] },
+      { key: 'edge', name: 'Microsoft Edge', paths: [path.join(programFilesX86, 'Microsoft\\Edge\\Application\\msedge.exe'), path.join(programFiles, 'Microsoft\\Edge\\Application\\msedge.exe')] },
+      { key: 'firefox', name: 'Mozilla Firefox', paths: [path.join(programFiles, 'Mozilla Firefox\\firefox.exe'), path.join(programFilesX86, 'Mozilla Firefox\\firefox.exe')] },
+      { key: 'yandex', name: 'Yandex Browser', paths: [path.join(localAppData, 'Yandex\\YandexBrowser\\Application\\browser.exe'), path.join(programFiles, 'Yandex\\YandexBrowser\\Application\\browser.exe')] },
+      { key: 'brave', name: 'Brave', paths: [path.join(programFiles, 'BraveSoftware\\Brave-Browser\\Application\\brave.exe'), path.join(programFilesX86, 'BraveSoftware\\Brave-Browser\\Application\\brave.exe')] }
+    ];
+    const found = [];
+    for (const c of candidates) {
+      for (const p of c.paths) { try { if (p && fs.existsSync(p)) { found.push({ key: c.key, name: c.name, exe: p }); break; } } catch (e) {} }
+    }
+    return found;
+  }
+
+  function findDiscord() {
+    const localAppData = process.env['LOCALAPPDATA'] || '';
+    const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+    const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    const quick = [path.join(localAppData, 'Discord', 'Update.exe'), path.join(programFiles, 'Discord', 'Update.exe'), path.join(programFilesX86, 'Discord', 'Update.exe')];
+    for (const p of quick) { try { if (fs.existsSync(p)) return p; } catch (e) {} }
+    try {
+      const discordDir = path.join(localAppData, 'Discord');
+      if (fs.existsSync(discordDir)) {
+        const subdirs = fs.readdirSync(discordDir);
+        for (const d of subdirs) {
+          if (d.startsWith('app-')) { const exe = path.join(discordDir, d, 'Discord.exe'); if (fs.existsSync(exe)) return exe; }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function findRoblox() {
+    const localAppData = process.env['LOCALAPPDATA'] || '';
+    const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+    const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    const robloxDir = path.join(localAppData, 'Roblox', 'Versions');
+    if (fs.existsSync(robloxDir)) {
+      try { const versions = fs.readdirSync(robloxDir); for (const v of versions) { const exe = path.join(robloxDir, v, 'RobloxPlayerBeta.exe'); if (fs.existsSync(exe)) return exe; } } catch (e) {}
+    }
+    const direct = path.join(localAppData, 'Roblox', 'RobloxPlayerBeta.exe');
+    if (fs.existsSync(direct)) return direct;
+    const pf = [path.join(programFiles, 'Roblox', 'RobloxPlayerBeta.exe'), path.join(programFilesX86, 'Roblox', 'RobloxPlayerBeta.exe')];
+    for (const p of pf) { try { if (fs.existsSync(p)) return p; } catch (e) {} }
+    return null;
+  }
+
+  function findSteam() {
+    const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+    const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    const localAppData = process.env['LOCALAPPDATA'] || '';
+    const candidates = [path.join(programFilesX86, 'Steam', 'steam.exe'), path.join(programFiles, 'Steam', 'steam.exe'), path.join(localAppData, 'Steam', 'steam.exe'), 'C:\\Steam\\steam.exe', 'D:\\Steam\\steam.exe', 'E:\\Steam\\steam.exe'];
+    for (const p of candidates) { try { if (p && fs.existsSync(p)) return p; } catch (e) {} }
+    try {
+      const { execSync } = require('child_process');
+      const out = execSync('reg query "HKCU\\Software\\Valve\\Steam" /v SteamExe', { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const match = out.match(/SteamExe\s+REG_SZ\s+(.+)/);
+      if (match && match[1]) { const exePath = match[1].trim(); if (fs.existsSync(exePath)) return exePath; }
+    } catch (e) {}
+    return null;
+  }
+
+  async function openInBrowser(browser, url) { try { await shell.openExternal(url); return true; } catch (e) { say('sys', t('errorBrowser') + e.message); return false; } }
+
+  async function cmdOpenSteam() {
+    say('jarvis', t('searchingSteam'));
+    const steamPath = findSteam();
+    if (!steamPath) { say('jarvis', t('steamNotFound')); await shell.openExternal('https://store.steampowered.com'); return; }
+    try { const { spawn } = require('child_process'); spawn(steamPath, [], { detached: true, stdio: 'ignore' }).unref(); say('jarvis', t('launchingSteam')); playServiceSound(); }
+    catch (e) { say('sys', t('errorLaunch') + e.message); await shell.openExternal('https://store.steampowered.com'); }
+  }
+
+  async function cmdOpenRoblox() {
+    say('jarvis', t('searchingRoblox'));
+    const robloxPath = findRoblox();
+    if (!robloxPath) { say('jarvis', t('robloxNotFound')); await shell.openExternal('https://www.roblox.com'); return; }
+    try { const { spawn } = require('child_process'); spawn(robloxPath, [], { detached: true, stdio: 'ignore' }).unref(); say('jarvis', t('launchingRoblox')); playServiceSound(); }
+    catch (e) { say('sys', t('errorLaunch') + e.message); await shell.openExternal('https://www.roblox.com'); }
+  }
+
+  async function cmdOpenDiscord() {
+    const discordPath = findDiscord();
+    if (!discordPath) { say('jarvis', t('discordNotFound')); await shell.openExternal('https://discord.com/app'); return; }
+    try {
+      const { spawn } = require('child_process');
+      if (discordPath.toLowerCase().endsWith('update.exe')) spawn(discordPath, ['--processStart', 'Discord.exe'], { detached: true, stdio: 'ignore' }).unref();
+      else spawn(discordPath, [], { detached: true, stdio: 'ignore' }).unref();
+      say('jarvis', t('launchingDiscord')); playServiceSound();
+    } catch (e) { say('sys', t('errorLaunch') + e.message); await shell.openExternal('https://discord.com/app'); }
+  }
+
+  async function cmdOpenYouTube() {
+    const browsers = findBrowsers();
+    if (browsers.length === 0) { say('jarvis', t('noBrowsersFound')); return; }
+    if (config.preferredBrowser) {
+      const b = browsers.find(x => x.key === config.preferredBrowser);
+      if (b) { say('jarvis', `${t('openingYoutubeIn')} ${b.name}.`); await openInBrowser(b, 'https://www.youtube.com'); say('jarvis', t('youtubeOpened')); playServiceSound(); return; }
+    }
+    say('jarvis', t('chooseBrowser'));
+    browsers.forEach((b, i) => say('sys', `  ${i + 1}. ${b.name}`));
+    say('sys', t('browserHint'));
+    state.awaitingBrowserChoice = true; state.pendingUrl = 'https://www.youtube.com';
+  }
+
+  async function handleBrowserChoice(text) {
+    const lower = text.toLowerCase().trim();
+    const browsers = findBrowsers();
+    const rememberWords = ['запомни', 'remember'];
+    const remember = rememberWords.some(w => lower.includes(w));
+    let cleaned = lower;
+    rememberWords.forEach(w => cleaned = cleaned.replace(w, '').trim());
+    let chosen = browsers.find(b => cleaned.includes(b.key));
+    if (!chosen) chosen = browsers.find(b => cleaned.includes(b.name.toLowerCase()));
+    if (!chosen && /^\d+$/.test(cleaned)) { const idx = parseInt(cleaned, 10) - 1; if (browsers[idx]) chosen = browsers[idx]; }
+    if (!chosen) { say('jarvis', t('browserNotUnderstood')); return; }
+    say('jarvis', `${t('understoodUsing')} ${chosen.name}.`);
+    if (remember) { config.preferredBrowser = chosen.key; saveConfig(config); say('sys', `${t('rememberedBrowser')}${chosen.name}${t('defaultBrowser')}`); }
+    const url = state.pendingUrl || 'https://www.youtube.com';
+    state.awaitingBrowserChoice = false; state.pendingUrl = null;
+    await openInBrowser(chosen, url);
+    say('jarvis', t('youtubeOpened')); playServiceSound();
+  }
+
+  function cmdHelp() {
+    say('jarvis', t('helpTitle'));
+    say('sys', t('helpSteam')); say('sys', t('helpRoblox')); say('sys', t('helpYoutube')); say('sys', t('helpDiscord'));
+    say('sys', t('helpPing')); say('sys', t('helpStopPing')); say('sys', t('helpHello')); say('sys', t('helpResetBrowser'));
+    say('sys', t('helpShutdown')); say('sys', t('helpHelp'));
+    if (state.customCommands.length > 0) say('sys', `• Свои команды: ${state.customCommands.length} шт.`);
+  }
+
+  function cmdResetBrowser() { config.preferredBrowser = null; saveConfig(config); say('jarvis', t('browserReset')); }
+
+  const commands = [
+    { triggers: ['выключение', 'выключись', 'выключи', 'завершение работы', 'пока', 'до свидания', 'закройся', 'спать', 'shutdown', 'exit'], action: shutdown },
+    { triggers: ['стоп пинг', 'останови пинг', 'stop ping', 'хватит пинг'], action: () => stopPing(false) },
+    { triggers: ['пинг', 'ping', 'тест сети', 'проверь интернет', 'проверь сеть'], action: startPing },
+    { triggers: ['стим', 'steam', 'стимок'], action: cmdOpenSteam },
+    { triggers: ['роблокс', 'roblox', 'робл'], action: cmdOpenRoblox },
+    { triggers: ['дискорд', 'discord', 'дис'], action: cmdOpenDiscord },
+    { triggers: ['ютуб', 'youtube', 'ютьюб', 'youtu.be'], action: cmdOpenYouTube },
+    { triggers: ['привет', 'здравствуй', 'хай', 'hello', 'hi'], action: () => say('jarvis', t('greeting')) },
+    { triggers: ['помощь', 'help', 'что ты умеешь', 'команды', 'commands'], action: cmdHelp },
+    { triggers: ['сбрось браузер', 'забудь браузер', 'reset browser'], action: cmdResetBrowser }
+  ];
+
+  async function handleInput(raw) {
+    if (state.booting || state.shuttingDown) return;
+    const text = raw.trim();
+    if (!text) return;
+    say('user', text);
+    if (state.awaitingBrowserChoice) { await handleBrowserChoice(text); return; }
+    const lower = text.toLowerCase();
+    for (const cmd of state.customCommands) {
+      if (lower.includes(cmd.phrase.toLowerCase())) { await runCustomCommand(cmd); return; }
+    }
+    for (const cmd of commands) {
+      if (cmd.triggers.some(tr => lower.includes(tr))) { await cmd.action(); return; }
+    }
+    say('jarvis', t('notRecognized'));
+  }
+
+  sendBtn.addEventListener('click', async () => { await handleInput(inputEl.value); inputEl.value = ''; inputEl.focus(); });
+  inputEl.addEventListener('keydown', async e => { if (e.key === 'Enter') { await handleInput(inputEl.value); inputEl.value = ''; } });
+
+  applyLanguage();
+  initAutostart();
+  bootSequence();
+</script>
+</body>
+</html>
