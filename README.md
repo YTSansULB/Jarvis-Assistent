@@ -44,26 +44,6 @@ This project is in **early stages of development**. Expect bugs, missing feature
    *(This is normal for unsigned apps. Code signing certificate is planned.)*
 5. Follow the installer → Jarvis will be added to your Start Menu and Desktop
 
-### Option 2 — Build from source
-
-Requirements: **Node.js 18+** installed.
-
-```bash
-git clone https://github.com/YTSansULB/Jarvis-Assistant.git
-cd Jarvis-Assistant
-npm install
-npm start
-```
-
-To build the installer:
-
-```bash
-npm run build
-```
-
-The output `.exe` will be in the `dist/` folder.
-
----
 
 ## Usage
 
